@@ -11,3 +11,5 @@ coverage/
 dist/
 
 .DS_Store
+
+.csv
