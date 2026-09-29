@@ -4,8 +4,10 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -14,14 +16,9 @@ env:
 
 jobs:
   build-and-push:
-
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: read
-
     steps:
-
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -35,13 +32,11 @@ jobs:
         run: npm ci
 
       - name: Run Tests
-        run: npm test --if-present
+        run: npm test
 
+      # Build BEFORE credentials are configured → build can't access AWS keys
       - name: Build Docker Image
-        run: |
-          docker build \
-            -t $ECR_REPOSITORY:$IMAGE_TAG \
-            -t $ECR_REPOSITORY:latest .
+        run: docker build -t "$ECR_REPOSITORY:$IMAGE_TAG" .
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -50,29 +45,24 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS Identity
+        run: aws sts get-caller-identity
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Tag Docker Image
+      - name: Tag and Push Image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          docker tag $ECR_REPOSITORY:$IMAGE_TAG \
-            $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-
-          docker tag $ECR_REPOSITORY:latest \
-            $REGISTRY/$ECR_REPOSITORY:latest
-
-      - name: Push Docker Images
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        run: |
-          docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $REGISTRY/$ECR_REPOSITORY:latest
+          IMAGE_URI="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker tag "$ECR_REPOSITORY:$IMAGE_TAG" "$IMAGE_URI"
+          docker push "$IMAGE_URI"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
 
       - name: Build Summary
         run: |
-          echo "Docker image pushed successfully."
-          echo "Repository : $ECR_REPOSITORY"
-          echo "Tag        : $IMAGE_TAG"
+          echo "### ✅ Image pushed to ECR" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tag: \`$IMAGE_TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URI: \`$IMAGE_URI\`" >> "$GITHUB_STEP_SUMMARY"
